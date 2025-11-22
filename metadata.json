@@ -1,0 +1,7 @@
+{
+  "name": "BPK CPR Tracker",
+  "description": "A digital application to streamline and improve the documentation of in-hospital cardiac arrest events. It provides a real-time, user-friendly interface for logging critical interventions and a dynamic summary dashboard to guide treatment according to ACLS protocols.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
