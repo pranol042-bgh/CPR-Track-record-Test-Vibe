@@ -7,11 +7,13 @@ import {
   ListBulletIcon, PlusIcon, ArrowUturnLeftIcon, BellAlertIcon, XMarkIcon,
   CheckCircleIcon, XCircleIcon, Cog6ToothIcon, MicrophoneIcon, SparklesIcon,
   PencilIcon, StopCircleIcon, UserIcon, ChevronDownIcon, ChevronUpIcon, ArrowDownTrayIcon,
-  ArchiveBoxIcon, EyeIcon, LockClosedIcon, ArrowLeftIcon
+  ArchiveBoxIcon, EyeIcon, LockClosedIcon, ArrowLeftIcon, SunIcon, MoonIcon
 } from './components/icons';
 
 const CPR_STATE_KEY = 'cprTrackRecordState';
 const CPR_HISTORY_KEY = 'cprTrackHistory';
+const APP_SETTINGS_KEY = 'CPR_APP_SETTINGS';
+const THEME_KEY = 'CPR_THEME';
 
 // Helper Functions
 const formatTime = (totalSeconds: number): string => {
@@ -901,6 +903,14 @@ const GuidedActions = React.memo(({ state, dispatch }: { state: AppState, dispat
 
 
 const SuggestedActions = React.memo(({ state, dispatch }: { state: AppState, dispatch: React.Dispatch<Action> }) => {
+    const [showSuggestionHelp, setShowSuggestionHelp] = useState(false);
+    const offlineSuggestions = [
+        'Continue high-quality CPR with minimal interruptions; rotate compressors if fatigued.',
+        'Re-evaluate rhythm and pulse at the next 2-minute mark; prepare defibrillator if shockable suspected.',
+        'Administer Epinephrine every 3–5 minutes per ACLS; ensure IV/IO access is patent.',
+        'Search for reversible causes (Hs & Ts) and treat any identified causes promptly.'
+    ];
+
     const handleFetchSuggestions = useCallback(async () => {
         dispatch({ type: 'FETCH_SUGGESTIONS_START' });
 
@@ -919,7 +929,13 @@ Current Code State:
 `;
 
         try {
-            const ai = new GoogleGenAI({apiKey: import.meta.env.VITE_GEMINI_API_KEY});
+            const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+            if (!apiKey) {
+                dispatch({ type: 'FETCH_SUGGESTIONS_FAILURE', payload: 'AI suggestions need a Gemini API key (VITE_GEMINI_API_KEY). Add your key and retry.' });
+                return;
+            }
+
+            const ai = new GoogleGenAI({apiKey});
             const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
             const response = await model.generateContent(prompt);
@@ -950,9 +966,31 @@ Current Code State:
                             Generating suggestions...
                         </div>
                     ) : state.suggestions.error ? (
-                         <div className="flex flex-col items-center justify-center h-full text-red-400">
-                            <XCircleIcon className="h-8 w-8 mb-2" />
+                         <div className="flex flex-col items-center justify-center h-full text-red-400 space-y-3">
+                            <XCircleIcon className="h-8 w-8" />
                             <p>{state.suggestions.error}</p>
+                            <div className="flex flex-wrap justify-center gap-2">
+                                <button
+                                    onClick={() => setShowSuggestionHelp(v => !v)}
+                                    className="px-3 py-1 rounded bg-brand-dark text-slate-200 text-sm border border-brand-subtle hover:border-brand-accent-blue"
+                                >
+                                    {showSuggestionHelp ? 'Hide fix steps' : 'How to fix'}
+                                </button>
+                                <button
+                                    onClick={() => dispatch({ type: 'FETCH_SUGGESTIONS_SUCCESS', payload: offlineSuggestions })}
+                                    className="px-3 py-1 rounded bg-brand-accent-blue text-white text-sm hover:opacity-90"
+                                >
+                                    Use offline hints
+                                </button>
+                            </div>
+                            {showSuggestionHelp && (
+                                <div className="text-left text-slate-300 bg-brand-dark/60 border border-brand-subtle rounded p-3 text-sm space-y-1">
+                                    <p className="font-semibold text-slate-200">Troubleshoot:</p>
+                                    <p>1) Create a Gemini API key at makersuite.google.com and add it to your `.env` as `VITE_GEMINI_API_KEY`.</p>
+                                    <p>2) Restart the app to load the new key, then click Get Suggestions again.</p>
+                                    <p>3) Ensure network access to Gemini is allowed from this device.</p>
+                                </div>
+                            )}
                         </div>
                     ) : state.suggestions.data.length > 0 ? (
                         <ul className="space-y-3">
@@ -1029,7 +1067,7 @@ const TimerSettings = React.memo(({ settings, dispatch }: { settings: AppState['
   );
 });
 
-const GlobalSettingsModal: React.FC<{ isOpen: boolean, onClose: () => void, dispatch: React.Dispatch<Action> }> = ({ isOpen, onClose, dispatch }) => {
+const GlobalSettingsModal: React.FC<{ isOpen: boolean, onClose: () => void, dispatch: React.Dispatch<Action>, timerSettings: AppState['timerSettings'] }> = ({ isOpen, onClose, dispatch, timerSettings }) => {
     const [activeTab, setActiveTab] = useState<'general' | 'history' | 'users'>('history');
     const [history, setHistory] = useState<SavedCodeRecord[]>([]);
 
@@ -1131,21 +1169,6 @@ const GlobalSettingsModal: React.FC<{ isOpen: boolean, onClose: () => void, disp
         } catch (e) { console.error(e); }
     };
 
-    // General settings stored in localStorage
-    const APP_SETTINGS_KEY = 'CPR_APP_SETTINGS';
-    const [appSettings, setAppSettings] = useState<{rhythmCheck:number, epinephrine:number}>(() => {
-        try {
-            const raw = localStorage.getItem(APP_SETTINGS_KEY);
-            if (raw) return JSON.parse(raw);
-        } catch {}
-        return { rhythmCheck: 120, epinephrine: 180 };
-    });
-
-    const handleSaveAppSettings = (e?:React.FormEvent) => {
-        e?.preventDefault();
-        try { localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings)); } catch (e) { console.error(e); }
-    };
-
     if (!isOpen) return null;
 
     return (
@@ -1161,55 +1184,54 @@ const GlobalSettingsModal: React.FC<{ isOpen: boolean, onClose: () => void, disp
                     </button>
                 </div>
 
-                <div className="flex border-b border-brand-subtle">
-                    <button 
-                        onClick={() => setActiveTab('history')}
-                        className={`px-6 py-3 font-semibold transition-colors ${activeTab === 'history' ? 'border-b-2 border-brand-accent-blue text-brand-accent-blue' : 'text-slate-400 hover:text-white'}`}
-                    >
-                        Code History
-                    </button>
-                    <button 
-                        onClick={() => setActiveTab('general')}
-                        className={`px-6 py-3 font-semibold transition-colors ${activeTab === 'general' ? 'border-b-2 border-brand-accent-blue text-brand-accent-blue' : 'text-slate-400 hover:text-white'}`}
-                    >
-                        General
-                    </button>
-                    <button 
-                        onClick={() => setActiveTab('users')}
-                        className={`px-6 py-3 font-semibold transition-colors ${activeTab === 'users' ? 'border-b-2 border-brand-accent-blue text-brand-accent-blue' : 'text-slate-400 hover:text-white'}`}
-                    >
-                        User Management
-                    </button>
-                </div>
-
                 <div className="flex-grow overflow-y-auto p-6">
-                    {/* Login / current user status */}
-                    <div className="flex items-center justify-end mb-4">
-                        {!currentUser ? (
-                            <form onSubmit={handleLogin} className="flex items-center gap-3">
-                                <input className="bg-brand-dark border border-brand-subtle rounded px-2 py-1 text-white text-sm" placeholder="username" value={loginUser} onChange={e=>setLoginUser(e.target.value)} />
-                                <input type="password" className="bg-brand-dark border border-brand-subtle rounded px-2 py-1 text-white text-sm" placeholder="password" value={loginPass} onChange={e=>setLoginPass(e.target.value)} />
-                                <button className="bg-brand-accent-blue text-white px-3 py-1 rounded text-sm">Login</button>
+                    {!currentUser ? (
+                        <div className="flex flex-col items-center justify-center h-full max-w-md mx-auto text-center space-y-4">
+                            <LockClosedIcon className="h-14 w-14 text-slate-400" />
+                            <div>
+                                <p className="text-lg font-semibold">Sign in to access Settings & Admin</p>
+                                <p className="text-sm text-slate-500 mt-1">Use admin (admin/12345678) or a user created in User Management.</p>
+                            </div>
+                            {authError && <div className="text-red-400 text-sm">{authError}</div>}
+                            <form onSubmit={handleLogin} className="w-full space-y-3">
+                                <input className="w-full bg-brand-dark border border-brand-subtle rounded px-3 py-2 text-white" placeholder="username" value={loginUser} onChange={e=>setLoginUser(e.target.value)} />
+                                <input type="password" className="w-full bg-brand-dark border border-brand-subtle rounded px-3 py-2 text-white" placeholder="password" value={loginPass} onChange={e=>setLoginPass(e.target.value)} />
+                                <button className="w-full bg-brand-accent-blue text-white px-4 py-2 rounded font-semibold">Login</button>
                             </form>
-                        ) : (
-                            <div className="flex items-center gap-3">
-                                <span className="text-sm text-green-400">{currentUser.username} ({currentUser.role})</span>
+                        </div>
+                    ) : (
+                        <>
+                            <div className="flex items-center justify-between mb-4">
+                                <div className="flex items-center gap-2">
+                                    <CheckCircleIcon className="h-5 w-5 text-green-400" />
+                                    <span className="text-sm text-slate-300">Signed in as {currentUser.username} ({currentUser.role})</span>
+                                </div>
                                 <button onClick={handleLogout} className="text-slate-400 hover:text-white text-sm">Logout</button>
                             </div>
-                        )}
-                    </div>
-                    {authError && <div className="text-red-400 text-sm mb-4">{authError}</div>}
 
-                    {activeTab === 'history' && (
-                        <div>
-                            {!currentUser ? (
-                                <div className="flex flex-col items-center justify-center h-64 text-slate-400">
-                                    <LockClosedIcon className="h-12 w-12 mb-4" />
-                                    <p className="text-lg">Sign in to view Code History.</p>
-                                    <p className="text-sm mt-2 text-slate-500">Use an account created in User Management. Admin (admin/12345678) can manage records.</p>
-                                </div>
-                            ) : (
-                                <>
+                            <div className="flex border-b border-brand-subtle mb-4">
+                                <button 
+                                    onClick={() => setActiveTab('history')}
+                                    className={`px-6 py-3 font-semibold transition-colors ${activeTab === 'history' ? 'border-b-2 border-brand-accent-blue text-brand-accent-blue' : 'text-slate-400 hover:text-white'}`}
+                                >
+                                    Code History
+                                </button>
+                                <button 
+                                    onClick={() => setActiveTab('general')}
+                                    className={`px-6 py-3 font-semibold transition-colors ${activeTab === 'general' ? 'border-b-2 border-brand-accent-blue text-brand-accent-blue' : 'text-slate-400 hover:text-white'}`}
+                                >
+                                    General
+                                </button>
+                                <button 
+                                    onClick={() => setActiveTab('users')}
+                                    className={`px-6 py-3 font-semibold transition-colors ${activeTab === 'users' ? 'border-b-2 border-brand-accent-blue text-brand-accent-blue' : 'text-slate-400 hover:text-white'}`}
+                                >
+                                    User Management
+                                </button>
+                            </div>
+
+                            {activeTab === 'history' && (
+                                <div>
                                     {history.length === 0 ? (
                                         <div className="text-center text-slate-500 py-10">No recorded codes found.</div>
                                     ) : (
@@ -1245,84 +1267,72 @@ const GlobalSettingsModal: React.FC<{ isOpen: boolean, onClose: () => void, disp
                                             ))}
                                         </div>
                                     )}
-                                </>
+                                </div>
                             )}
-                        </div>
-                    )}
 
                     {activeTab === 'general' && (
                         <div className="py-6">
-                            <form onSubmit={handleSaveAppSettings} className="max-w-md mx-auto space-y-4 text-left">
-                                <div>
-                                    <label className="block text-slate-400 text-sm mb-1">Rhythm Check (seconds)</label>
-                                    <input type="number" value={appSettings.rhythmCheck} onChange={e=>setAppSettings({...appSettings, rhythmCheck: Number(e.target.value)})} className="w-full bg-brand-dark border border-brand-subtle rounded px-3 py-2 text-white" />
-                                </div>
-                                <div>
-                                    <label className="block text-slate-400 text-sm mb-1">Epinephrine Interval (seconds)</label>
-                                    <input type="number" value={appSettings.epinephrine} onChange={e=>setAppSettings({...appSettings, epinephrine: Number(e.target.value)})} className="w-full bg-brand-dark border border-brand-subtle rounded px-3 py-2 text-white" />
-                                </div>
-                                <div className="flex justify-end">
-                                    {currentUser?.role === 'Admin' ? (
-                                        <button className="bg-brand-accent-blue text-white px-4 py-2 rounded">Save Settings</button>
-                                    ) : (
-                                        <div className="text-slate-400 text-sm">Admin only: sign in to edit settings.</div>
-                                    )}
-                                </div>
-                            </form>
+                            {currentUser?.role === 'Admin' ? (
+                                <TimerSettings settings={timerSettings} dispatch={dispatch} />
+                            ) : (
+                                <div className="text-center text-slate-400 py-10">Admin only: sign in to edit timer intervals.</div>
+                            )}
                         </div>
                     )}
 
-                    {activeTab === 'users' && (
-                        <div>
-                            {currentUser?.role !== 'Admin' ? (
-                                <div className="text-center text-slate-400 py-10">Admin access required to manage users.</div>
-                            ) : (
+                            {activeTab === 'users' && (
                                 <div>
-                                    <form onSubmit={handleAddUser} className="flex gap-3 mb-4">
-                                        <input value={newUsername} onChange={e=>setNewUsername(e.target.value)} placeholder="username" className="flex-grow bg-brand-dark border border-brand-subtle rounded px-3 py-2 text-white" />
-                                        <input value={newPassword} onChange={e=>setNewPassword(e.target.value)} placeholder="password" type="password" className="bg-brand-dark border border-brand-subtle rounded px-3 py-2 text-white w-56" />
-                                        <select value={newRole} onChange={e=>setNewRole(e.target.value as 'Admin'|'User') } className="bg-brand-dark border border-brand-subtle rounded px-3 py-2 text-white">
-                                            <option value="User">User</option>
-                                            <option value="Admin">Admin</option>
-                                        </select>
-                                        <button className="bg-brand-accent-blue text-white px-4 py-2 rounded">Add User</button>
-                                    </form>
-                                    <div className="bg-brand-dark rounded-lg p-4">
-                                        <table className="w-full text-left">
-                                            <thead>
-                                                <tr className="border-b border-brand-subtle text-slate-400 text-sm">
-                                                    <th className="p-2">ID</th>
-                                                    <th className="p-2">Username</th>
-                                                    <th className="p-2">Role</th>
-                                                    <th className="p-2">Actions</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {users.map(u => (
-                                                    <tr key={u.id} className="border-b border-brand-dark/50">
-                                                        <td className="p-2">{u.id}</td>
-                                                        <td className="p-2">{u.username}</td>
-                                                        <td className="p-2">
-                                                            {currentUser?.role === 'Admin' ? (
-                                                                <select value={u.role} onChange={e=>handleUpdateUserRole(u.id, e.target.value as 'Admin'|'User')} className="bg-brand-dark border border-brand-subtle rounded px-2 py-1 text-white text-sm">
-                                                                    <option value="User">User</option>
-                                                                    <option value="Admin">Admin</option>
-                                                                </select>
-                                                            ) : u.role}
-                                                        </td>
-                                                        <td className="p-2">
-                                                            <div className="flex items-center gap-3">
-                                                                <button onClick={() => handleDeleteUser(u.id)} className="text-red-400 hover:underline text-sm" disabled={u.username === 'admin'}>Delete</button>
-                                                            </div>
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
+                                    {currentUser?.role !== 'Admin' ? (
+                                        <div className="text-center text-slate-400 py-10">Admin access required to manage users.</div>
+                                    ) : (
+                                        <div>
+                                            <form onSubmit={handleAddUser} className="flex gap-3 mb-4">
+                                                <input value={newUsername} onChange={e=>setNewUsername(e.target.value)} placeholder="username" className="flex-grow bg-brand-dark border border-brand-subtle rounded px-3 py-2 text-white" />
+                                                <input value={newPassword} onChange={e=>setNewPassword(e.target.value)} placeholder="password" type="password" className="bg-brand-dark border border-brand-subtle rounded px-3 py-2 text-white w-56" />
+                                                <select value={newRole} onChange={e=>setNewRole(e.target.value as 'Admin'|'User') } className="bg-brand-dark border border-brand-subtle rounded px-3 py-2 text-white">
+                                                    <option value="User">User</option>
+                                                    <option value="Admin">Admin</option>
+                                                </select>
+                                                <button className="bg-brand-accent-blue text-white px-4 py-2 rounded">Add User</button>
+                                            </form>
+                                            <div className="bg-brand-dark rounded-lg p-4">
+                                                <table className="w-full text-left">
+                                                    <thead>
+                                                        <tr className="border-b border-brand-subtle text-slate-400 text-sm">
+                                                            <th className="p-2">ID</th>
+                                                            <th className="p-2">Username</th>
+                                                            <th className="p-2">Role</th>
+                                                            <th className="p-2">Actions</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {users.map(u => (
+                                                            <tr key={u.id} className="border-b border-brand-dark/50">
+                                                                <td className="p-2">{u.id}</td>
+                                                                <td className="p-2">{u.username}</td>
+                                                                <td className="p-2">
+                                                                    {currentUser?.role === 'Admin' ? (
+                                                                        <select value={u.role} onChange={e=>handleUpdateUserRole(u.id, e.target.value as 'Admin'|'User')} className="bg-brand-dark border border-brand-subtle rounded px-2 py-1 text-white text-sm">
+                                                                            <option value="User">User</option>
+                                                                            <option value="Admin">Admin</option>
+                                                                        </select>
+                                                                    ) : u.role}
+                                                                </td>
+                                                                <td className="p-2">
+                                                                    <div className="flex items-center gap-3">
+                                                                        <button onClick={() => handleDeleteUser(u.id)} className="text-red-400 hover:underline text-sm" disabled={u.username === 'admin'}>Delete</button>
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             )}
-                        </div>
+                        </>
                     )}
                 </div>
             </div>
@@ -1897,20 +1907,19 @@ const CodeScreen: React.FC<{ state: AppState, dispatch: React.Dispatch<Action>, 
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <TimerDisplay label="RHYTHM CHECK" time={state.timers.rhythmCheck} active={state.timers.rhythmCheck !== null} activeColor="text-yellow-400" activeBgColor="bg-brand-accent-yellow" />
-                <TimerDisplay 
-                    label="EPINEPHRINE" 
-                    time={state.timers.epinephrine} 
-                    active={state.timers.epinephrine !== null}
-                    activeColor="text-blue-400" 
-                    activeBgColor="bg-brand-accent-blue"
-                />
-            </div>
-            
-            <SummaryCounts counts={state.summaryCounts} lastShockEnergy={state.lastShockEnergy} />
-            <SuggestedActions state={state} dispatch={dispatch} />
-            <TimerSettings settings={state.timerSettings} dispatch={dispatch} />
+            <TimerDisplay 
+                label="EPINEPHRINE" 
+                time={state.timers.epinephrine} 
+                active={state.timers.epinephrine !== null}
+                activeColor="text-blue-400" 
+                activeBgColor="bg-brand-accent-blue"
+            />
         </div>
+        
+        <SummaryCounts counts={state.summaryCounts} lastShockEnergy={state.lastShockEnergy} />
+        <SuggestedActions state={state} dispatch={dispatch} />
     </div>
+</div>
   </main>
 );
 
@@ -2185,7 +2194,7 @@ const SummaryScreen: React.FC<{ state: AppState, dispatch: React.Dispatch<Action
 };
 
 
-const StartScreen: React.FC<{ onStart: () => void, onLoadState: (state: AppState) => void, previousStateStatus: CodeStatus | 'none', onOpenSettings: () => void, onReviewHistory: (record: SavedCodeRecord) => void }> = ({ onStart, onLoadState, previousStateStatus, onOpenSettings, onReviewHistory }) => {
+const StartScreen: React.FC<{ onStart: () => void, onLoadState: (state: AppState) => void, previousStateStatus: CodeStatus | 'none', onOpenSettings: () => void, onReviewHistory: (record: SavedCodeRecord) => void, theme: 'dark' | 'light', onToggleTheme: () => void }> = ({ onStart, onLoadState, previousStateStatus, onOpenSettings, onReviewHistory, theme, onToggleTheme }) => {
     
     const lastHistoryItem = getLastSavedHistoryRecord();
     const canResume = previousStateStatus === 'active';
@@ -2211,13 +2220,22 @@ const StartScreen: React.FC<{ onStart: () => void, onLoadState: (state: AppState
 
     return (
         <div className="flex flex-col items-center justify-center min-h-screen text-center p-4 relative">
-            <button 
-                onClick={onOpenSettings}
-                className="absolute top-6 right-6 p-3 rounded-full bg-brand-card border border-brand-subtle text-slate-400 hover:text-white hover:bg-brand-subtle transition-all"
-                title="Settings & Admin"
-            >
-                <Cog6ToothIcon className="h-8 w-8" />
-            </button>
+            <div className="absolute top-6 right-6 flex items-center gap-3">
+                <button
+                    onClick={onToggleTheme}
+                    className="p-3 rounded-full bg-brand-card border border-brand-subtle text-slate-400 hover:text-white hover:bg-brand-subtle transition-all"
+                    title="Toggle Day/Night theme"
+                >
+                    {theme === 'dark' ? <SunIcon className="h-7 w-7" /> : <MoonIcon className="h-7 w-7" />}
+                </button>
+                <button 
+                    onClick={onOpenSettings}
+                    className="p-3 rounded-full bg-brand-card border border-brand-subtle text-slate-400 hover:text-white hover:bg-brand-subtle transition-all"
+                    title="Settings & Admin"
+                >
+                    <Cog6ToothIcon className="h-8 w-8" />
+                </button>
+            </div>
 
             <HeartbeatIcon className="h-24 w-24 mb-4"/>
             <h1 className="text-5xl font-bold mb-2">BPK CPR Tracker</h1>
@@ -2245,10 +2263,44 @@ const StartScreen: React.FC<{ onStart: () => void, onLoadState: (state: AppState
 
 
 const App = () => {
-  const [state, dispatch] = useReducer(appReducer, initialState);
+  const [state, dispatch] = useReducer(appReducer, initialState, (init) => {
+      try {
+          const raw = localStorage.getItem(APP_SETTINGS_KEY);
+          if (raw) {
+              const saved = JSON.parse(raw);
+              return {
+                  ...init,
+                  timerSettings: {
+                      rhythmCheck: typeof saved.rhythmCheck === 'number' ? saved.rhythmCheck : init.timerSettings.rhythmCheck,
+                      epinephrine: typeof saved.epinephrine === 'number' ? saved.epinephrine : init.timerSettings.epinephrine,
+                  }
+              };
+          }
+      } catch {}
+      return init;
+  });
   const [isInitialized, setIsInitialized] = useState(false);
   const [previousStateStatus, setPreviousStateStatus] = useState<CodeStatus | 'none'>('none');
   const [showSettings, setShowSettings] = useState(false);
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+      try {
+          const saved = localStorage.getItem(THEME_KEY);
+          return saved === 'light' ? 'light' : 'dark';
+      } catch {
+          return 'dark';
+      }
+  });
+
+  useEffect(() => {
+      const body = document.body;
+      body.classList.remove('bg-brand-dark', 'text-slate-200', 'bg-white', 'text-slate-900');
+      if (theme === 'dark') {
+          body.classList.add('bg-brand-dark', 'text-slate-200');
+      } else {
+          body.classList.add('bg-white', 'text-slate-900');
+      }
+      try { localStorage.setItem(THEME_KEY, theme); } catch {}
+  }, [theme]);
 
   // Main timer tick
   useEffect(() => {
@@ -2305,6 +2357,14 @@ const App = () => {
         }
     }
   }, [state.events, state.codeStatus, state.patientDetails, state.summaryCounts, state.algorithmState, isInitialized]); 
+
+  useEffect(() => {
+      if (isInitialized) {
+          try {
+              localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(state.timerSettings));
+          } catch (e) { console.error(e); }
+      }
+  }, [state.timerSettings, isInitialized]);
   
   const handleStart = () => {
       if(previousStateStatus !== 'none') {
@@ -2315,6 +2375,8 @@ const App = () => {
       dispatch({type: 'RESET_APP'});
       dispatch({type: 'START_CODE'});
   };
+
+  const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
 
   if (!isInitialized) {
       return null; // or a loading spinner
@@ -2329,7 +2391,7 @@ const App = () => {
             return <SummaryScreen state={state} dispatch={dispatch} onOpenSettings={() => setShowSettings(true)} />;
         case 'inactive':
         default:
-            return <StartScreen onStart={handleStart} onLoadState={loadState} previousStateStatus={previousStateStatus} onOpenSettings={() => setShowSettings(true)} onReviewHistory={reviewHistoryRecord} />;
+            return <StartScreen onStart={handleStart} onLoadState={loadState} previousStateStatus={previousStateStatus} onOpenSettings={() => setShowSettings(true)} onReviewHistory={reviewHistoryRecord} theme={theme} onToggleTheme={toggleTheme} />;
     }
   };
 
@@ -2343,7 +2405,7 @@ const App = () => {
             algorithmState={state.algorithmState} 
             lastShockEnergy={state.lastShockEnergy} 
         />
-        <GlobalSettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} dispatch={dispatch} />
+        <GlobalSettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} dispatch={dispatch} timerSettings={state.timerSettings} />
         {renderContent()}
     </>
   );
