@@ -5,8 +5,8 @@ export const HeartbeatIcon: React.FC<{ className?: string }> = ({ className }) =
   <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2}>
     <defs>
       <linearGradient id="heart-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" style={{stopColor: '#2563eb'}} />
-        <stop offset="50%" style={{stopColor: '#dc2626'}} />
+        <stop offset="0%" style={{stopColor: '#dc2626'}} />
+        <stop offset="50%" style={{stopColor: '#2563eb'}} />
         <stop offset="100%" style={{stopColor: '#f8fafc'}} />
       </linearGradient>
     </defs>

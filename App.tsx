@@ -429,7 +429,7 @@ const Header = React.memo(({ onEndCode, codeStatus, patientDetails, onOpenSettin
   <header className="flex items-center justify-between p-4 bg-brand-card rounded-lg mb-6">
     <div className="flex items-center">
       <HeartbeatIcon className="h-8 w-8" />
-      <h1 className="text-2xl font-bold ml-3">BPK CPR Tracker</h1>
+      <h1 className="text-2xl font-bold ml-3 text-red-500">BPK CPR Tracker</h1>
       <span className="text-sm text-slate-400 ml-3 mt-1">ACLS Guided Workflow</span>
     </div>
     <div className="flex items-center space-x-6">
@@ -919,13 +919,11 @@ Current Code State:
 `;
 
         try {
-            const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.5-flash',
-                contents: prompt,
-            });
+            const ai = new GoogleGenAI({apiKey: import.meta.env.VITE_GEMINI_API_KEY});
+            const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
-            const suggestions = response.text
+            const response = await model.generateContent(prompt);
+            const suggestions = response.response.text()
                 .split('\n')
                 .map(line => line.trim())
                 .filter(line => line.startsWith('-'))
@@ -1032,9 +1030,27 @@ const TimerSettings = React.memo(({ settings, dispatch }: { settings: AppState['
 });
 
 const GlobalSettingsModal: React.FC<{ isOpen: boolean, onClose: () => void, dispatch: React.Dispatch<Action> }> = ({ isOpen, onClose, dispatch }) => {
-    const [activeTab, setActiveTab] = useState<'general' | 'history'>('history');
-    const [isAdmin, setIsAdmin] = useState(false); // Mock admin toggle
+    const [activeTab, setActiveTab] = useState<'general' | 'history' | 'users'>('history');
     const [history, setHistory] = useState<SavedCodeRecord[]>([]);
+
+    // Authentication
+    const [loginUser, setLoginUser] = useState('');
+    const [loginPass, setLoginPass] = useState('');
+    const [authError, setAuthError] = useState('');
+    const [currentUser, setCurrentUser] = useState<{username:string, role:string} | null>(null);
+
+    // Users (persisted in localStorage)
+    const USERS_KEY = 'CPR_USERS';
+    const [users, setUsers] = useState<{id:number, username:string, role:string, password?:string}[]>(() => {
+        try {
+            const raw = localStorage.getItem(USERS_KEY);
+            if (raw) return JSON.parse(raw);
+        } catch {}
+        return [{ id: 1, username: 'admin', role: 'Admin', password: '12345678' }];
+    });
+    const [newUsername, setNewUsername] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [newRole, setNewRole] = useState<'Admin'|'User'>('User');
 
     useEffect(() => {
         if (isOpen && activeTab === 'history') {
@@ -1042,6 +1058,8 @@ const GlobalSettingsModal: React.FC<{ isOpen: boolean, onClose: () => void, disp
                 const data = localStorage.getItem(CPR_HISTORY_KEY);
                 if (data) {
                     setHistory(JSON.parse(data).reverse()); // Show newest first
+                } else {
+                    setHistory([]);
                 }
             } catch (e) {
                 console.error("Failed to load history", e);
@@ -1049,16 +1067,90 @@ const GlobalSettingsModal: React.FC<{ isOpen: boolean, onClose: () => void, disp
         }
     }, [isOpen, activeTab]);
 
+    useEffect(() => {
+        try { localStorage.setItem(USERS_KEY, JSON.stringify(users)); } catch (e) { console.error(e); }
+    }, [users]);
+
     const handleViewRecord = (record: SavedCodeRecord) => {
         dispatch({ type: 'VIEW_HISTORY_RECORD', payload: record });
         onClose();
+    };
+
+    const handleLogin = (e?: React.FormEvent) => {
+        e?.preventDefault();
+        setAuthError('');
+        const found = users.find(u => u.username === loginUser && u.password === loginPass);
+        if (found) {
+            setCurrentUser({ username: found.username, role: found.role });
+            setLoginUser(''); setLoginPass('');
+            setAuthError('');
+        } else {
+            setAuthError('Invalid credentials');
+        }
+    };
+
+    const handleLogout = () => {
+        setCurrentUser(null);
+        setAuthError('');
+    };
+
+    const handleAddUser = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!newUsername) return;
+        const next = { id: users.length ? Math.max(...users.map(u=>u.id)) + 1 : 1, username: newUsername, role: newRole, password: newPassword };
+        setUsers(prev => [...prev, next]);
+        setNewUsername(''); setNewPassword(''); setNewRole('User');
+    };
+
+    const handleDeleteUser = (id: number) => {
+        // Prevent deleting admin user
+        const u = users.find(x=>x.id===id);
+        if (u?.username === 'admin') return;
+        setUsers(prev => prev.filter(x => x.id !== id));
+        // If deleting currently logged-in user, log them out
+        if (currentUser?.username === u?.username) setCurrentUser(null);
+    };
+
+    const handleUpdateUserRole = (id:number, role:'Admin'|'User') => {
+        setUsers(prev => prev.map(u => u.id===id ? {...u, role} : u));
+        // If updating current user role, reflect it
+        if (currentUser?.username && users.find(u=>u.id===id)?.username === currentUser.username) {
+            setCurrentUser({ username: currentUser.username, role });
+        }
+    };
+
+    const handleDeleteRecord = (id: string) => {
+        if (currentUser?.role !== 'Admin') return;
+        try {
+            const raw = localStorage.getItem(CPR_HISTORY_KEY);
+            if (!raw) return;
+            const arr: SavedCodeRecord[] = JSON.parse(raw);
+            const filtered = arr.filter(r => r.id !== id);
+            localStorage.setItem(CPR_HISTORY_KEY, JSON.stringify(filtered));
+            setHistory(filtered.reverse());
+        } catch (e) { console.error(e); }
+    };
+
+    // General settings stored in localStorage
+    const APP_SETTINGS_KEY = 'CPR_APP_SETTINGS';
+    const [appSettings, setAppSettings] = useState<{rhythmCheck:number, epinephrine:number}>(() => {
+        try {
+            const raw = localStorage.getItem(APP_SETTINGS_KEY);
+            if (raw) return JSON.parse(raw);
+        } catch {}
+        return { rhythmCheck: 120, epinephrine: 180 };
+    });
+
+    const handleSaveAppSettings = (e?:React.FormEvent) => {
+        e?.preventDefault();
+        try { localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings)); } catch (e) { console.error(e); }
     };
 
     if (!isOpen) return null;
 
     return (
         <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4" onClick={onClose}>
-            <div className="bg-brand-card rounded-lg shadow-2xl w-full max-w-3xl h-[80vh] flex flex-col border border-brand-subtle" onClick={e => e.stopPropagation()}>
+            <div className="bg-brand-card rounded-lg shadow-2xl w-full max-w-4xl h-[80vh] flex flex-col border border-brand-subtle" onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-between p-4 border-b border-brand-subtle">
                     <h2 className="text-xl font-bold flex items-center">
                         <Cog6ToothIcon className="h-6 w-6 mr-2 text-slate-400" />
@@ -1076,34 +1168,45 @@ const GlobalSettingsModal: React.FC<{ isOpen: boolean, onClose: () => void, disp
                     >
                         Code History
                     </button>
-                    {/* Placeholder for general settings */}
                     <button 
                         onClick={() => setActiveTab('general')}
                         className={`px-6 py-3 font-semibold transition-colors ${activeTab === 'general' ? 'border-b-2 border-brand-accent-blue text-brand-accent-blue' : 'text-slate-400 hover:text-white'}`}
                     >
                         General
                     </button>
+                    <button 
+                        onClick={() => setActiveTab('users')}
+                        className={`px-6 py-3 font-semibold transition-colors ${activeTab === 'users' ? 'border-b-2 border-brand-accent-blue text-brand-accent-blue' : 'text-slate-400 hover:text-white'}`}
+                    >
+                        User Management
+                    </button>
                 </div>
 
                 <div className="flex-grow overflow-y-auto p-6">
-                     {/* Mock Admin Toggle */}
-                     <div className="flex items-center justify-end mb-4">
-                        <span className="text-sm text-slate-400 mr-3">{isAdmin ? 'Admin Mode: Active' : 'Admin Mode: Inactive'}</span>
-                        <button 
-                            onClick={() => setIsAdmin(!isAdmin)}
-                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${isAdmin ? 'bg-brand-accent-green' : 'bg-brand-subtle'}`}
-                        >
-                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${isAdmin ? 'translate-x-6' : 'translate-x-1'}`} />
-                        </button>
+                    {/* Login / current user status */}
+                    <div className="flex items-center justify-end mb-4">
+                        {!currentUser ? (
+                            <form onSubmit={handleLogin} className="flex items-center gap-3">
+                                <input className="bg-brand-dark border border-brand-subtle rounded px-2 py-1 text-white text-sm" placeholder="username" value={loginUser} onChange={e=>setLoginUser(e.target.value)} />
+                                <input type="password" className="bg-brand-dark border border-brand-subtle rounded px-2 py-1 text-white text-sm" placeholder="password" value={loginPass} onChange={e=>setLoginPass(e.target.value)} />
+                                <button className="bg-brand-accent-blue text-white px-3 py-1 rounded text-sm">Login</button>
+                            </form>
+                        ) : (
+                            <div className="flex items-center gap-3">
+                                <span className="text-sm text-green-400">{currentUser.username} ({currentUser.role})</span>
+                                <button onClick={handleLogout} className="text-slate-400 hover:text-white text-sm">Logout</button>
+                            </div>
+                        )}
                     </div>
+                    {authError && <div className="text-red-400 text-sm mb-4">{authError}</div>}
 
                     {activeTab === 'history' && (
                         <div>
-                            {!isAdmin ? (
+                            {!currentUser ? (
                                 <div className="flex flex-col items-center justify-center h-64 text-slate-400">
                                     <LockClosedIcon className="h-12 w-12 mb-4" />
-                                    <p className="text-lg">Admin access required to view Code History.</p>
-                                    <button onClick={() => setIsAdmin(true)} className="mt-4 text-brand-accent-blue hover:underline text-sm">Enable Mock Admin</button>
+                                    <p className="text-lg">Sign in to view Code History.</p>
+                                    <p className="text-sm mt-2 text-slate-500">Use an account created in User Management. Admin (admin/12345678) can manage records.</p>
                                 </div>
                             ) : (
                                 <>
@@ -1126,13 +1229,18 @@ const GlobalSettingsModal: React.FC<{ isOpen: boolean, onClose: () => void, disp
                                                             Outcome: <span className={record.outcome === 'ROSC' ? 'text-green-400' : 'text-slate-300'}>{record.outcome}</span>
                                                         </div>
                                                     </div>
-                                                    <button 
-                                                        onClick={() => handleViewRecord(record)}
-                                                        className="bg-brand-subtle hover:bg-brand-accent-blue text-white px-4 py-2 rounded flex items-center transition-colors"
-                                                    >
-                                                        <EyeIcon className="h-5 w-5 mr-2" />
-                                                        Review
-                                                    </button>
+                                                    <div className="flex items-center gap-2">
+                                                        <button 
+                                                            onClick={() => handleViewRecord(record)}
+                                                            className="bg-brand-subtle hover:bg-brand-accent-blue text-white px-4 py-2 rounded flex items-center transition-colors"
+                                                        >
+                                                            <EyeIcon className="h-5 w-5 mr-2" />
+                                                            Review
+                                                        </button>
+                                                        {currentUser.role === 'Admin' && (
+                                                            <button onClick={() => handleDeleteRecord(record.id)} className="text-red-400 hover:underline text-sm">Delete</button>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             ))}
                                         </div>
@@ -1143,9 +1251,77 @@ const GlobalSettingsModal: React.FC<{ isOpen: boolean, onClose: () => void, disp
                     )}
 
                     {activeTab === 'general' && (
-                        <div className="text-center text-slate-400 py-10">
-                            <p>General application settings would go here.</p>
-                            <p className="text-sm mt-2">(e.g., Default timer durations, Sound preferences)</p>
+                        <div className="py-6">
+                            <form onSubmit={handleSaveAppSettings} className="max-w-md mx-auto space-y-4 text-left">
+                                <div>
+                                    <label className="block text-slate-400 text-sm mb-1">Rhythm Check (seconds)</label>
+                                    <input type="number" value={appSettings.rhythmCheck} onChange={e=>setAppSettings({...appSettings, rhythmCheck: Number(e.target.value)})} className="w-full bg-brand-dark border border-brand-subtle rounded px-3 py-2 text-white" />
+                                </div>
+                                <div>
+                                    <label className="block text-slate-400 text-sm mb-1">Epinephrine Interval (seconds)</label>
+                                    <input type="number" value={appSettings.epinephrine} onChange={e=>setAppSettings({...appSettings, epinephrine: Number(e.target.value)})} className="w-full bg-brand-dark border border-brand-subtle rounded px-3 py-2 text-white" />
+                                </div>
+                                <div className="flex justify-end">
+                                    {currentUser?.role === 'Admin' ? (
+                                        <button className="bg-brand-accent-blue text-white px-4 py-2 rounded">Save Settings</button>
+                                    ) : (
+                                        <div className="text-slate-400 text-sm">Admin only: sign in to edit settings.</div>
+                                    )}
+                                </div>
+                            </form>
+                        </div>
+                    )}
+
+                    {activeTab === 'users' && (
+                        <div>
+                            {currentUser?.role !== 'Admin' ? (
+                                <div className="text-center text-slate-400 py-10">Admin access required to manage users.</div>
+                            ) : (
+                                <div>
+                                    <form onSubmit={handleAddUser} className="flex gap-3 mb-4">
+                                        <input value={newUsername} onChange={e=>setNewUsername(e.target.value)} placeholder="username" className="flex-grow bg-brand-dark border border-brand-subtle rounded px-3 py-2 text-white" />
+                                        <input value={newPassword} onChange={e=>setNewPassword(e.target.value)} placeholder="password" type="password" className="bg-brand-dark border border-brand-subtle rounded px-3 py-2 text-white w-56" />
+                                        <select value={newRole} onChange={e=>setNewRole(e.target.value as 'Admin'|'User') } className="bg-brand-dark border border-brand-subtle rounded px-3 py-2 text-white">
+                                            <option value="User">User</option>
+                                            <option value="Admin">Admin</option>
+                                        </select>
+                                        <button className="bg-brand-accent-blue text-white px-4 py-2 rounded">Add User</button>
+                                    </form>
+                                    <div className="bg-brand-dark rounded-lg p-4">
+                                        <table className="w-full text-left">
+                                            <thead>
+                                                <tr className="border-b border-brand-subtle text-slate-400 text-sm">
+                                                    <th className="p-2">ID</th>
+                                                    <th className="p-2">Username</th>
+                                                    <th className="p-2">Role</th>
+                                                    <th className="p-2">Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {users.map(u => (
+                                                    <tr key={u.id} className="border-b border-brand-dark/50">
+                                                        <td className="p-2">{u.id}</td>
+                                                        <td className="p-2">{u.username}</td>
+                                                        <td className="p-2">
+                                                            {currentUser?.role === 'Admin' ? (
+                                                                <select value={u.role} onChange={e=>handleUpdateUserRole(u.id, e.target.value as 'Admin'|'User')} className="bg-brand-dark border border-brand-subtle rounded px-2 py-1 text-white text-sm">
+                                                                    <option value="User">User</option>
+                                                                    <option value="Admin">Admin</option>
+                                                                </select>
+                                                            ) : u.role}
+                                                        </td>
+                                                        <td className="p-2">
+                                                            <div className="flex items-center gap-3">
+                                                                <button onClick={() => handleDeleteUser(u.id)} className="text-red-400 hover:underline text-sm" disabled={u.username === 'admin'}>Delete</button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
@@ -1275,18 +1451,21 @@ const Modal: React.FC<{
         setRecordingError(null);
 
         try {
-            const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
+            const ai = new GoogleGenAI({apiKey: import.meta.env.VITE_GEMINI_API_KEY});
+            const model = ai.getGenerativeModel({ model: "gemini-1.5-pro-latest" });
             const audioData = await blobToBase64(audioBlob);
             
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.5-pro',
-                contents: { parts: [
-                    { text: "Transcribe the following audio precisely. The audio is a nurse's note during a medical emergency." },
-                    { inlineData: { mimeType: audioBlob.type, data: audioData } },
-                ] },
-            });
+            const prompt = "Transcribe the following audio precisely. The audio is a nurse's note during a medical emergency.";
+            const audioPart = {
+              inlineData: {
+                data: audioData,
+                mimeType: audioBlob.type,
+              },
+            };
+
+            const response = await model.generateContent([prompt, audioPart]);
             
-            const transcription = response.text;
+            const transcription = response.response.text();
             setNurseNote(prevNote => (prevNote ? prevNote + ' ' : '') + transcription);
             setRecordingStatus('idle');
             setAudioBlob(null);
@@ -1899,7 +2078,7 @@ const SummaryScreen: React.FC<{ state: AppState, dispatch: React.Dispatch<Action
                     {!isHistoryView ? (
                         <button 
                             onClick={() => dispatch({ type: 'RESET_APP' })} 
-                            className="bg-brand-accent-green hover:opacity-90 transition-opacity text-white font-bold py-3 px-6 rounded-lg text-lg flex items-center justify-center"
+                            className="bg-brand-accent-yellow hover:bg-yellow-600 transition-opacity text-brand-dark font-bold py-3 px-6 rounded-lg text-lg flex items-center justify-center"
                         >
                             <PlayIcon className="h-6 w-6 mr-2"/> Start New Code
                         </button>
@@ -2046,7 +2225,7 @@ const StartScreen: React.FC<{ onStart: () => void, onLoadState: (state: AppState
                 A digital application to streamline and improve the documentation of in-hospital cardiac arrest events.
             </p>
             <div className="flex items-center space-x-4">
-                <button onClick={onStart} className="bg-brand-accent-green hover:opacity-90 transition-opacity text-white font-bold py-4 px-8 rounded-lg text-2xl flex items-center justify-center">
+                <button onClick={onStart} className="bg-brand-accent-yellow hover:opacity-90 transition-opacity text-white font-bold py-4 px-8 rounded-lg text-2xl flex items-center justify-center">
                     <PlayIcon className="h-8 w-8 mr-3"/> Start New Code
                 </button>
                 <button 
